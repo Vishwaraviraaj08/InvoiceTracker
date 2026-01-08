@@ -1,19 +1,10 @@
 # backend/.env
 
-
-# Groq API Configuration
 GROQ_API_KEY=<YOUR_GROQ_API_KEY>
-
-
-# MongoDB Configuration
 MONGODB_URI=mongodb://localhost:27017
 MONGODB_DATABASE=invoice_manager
-
-# Application Settings
 DEBUG=true
 LOG_LEVEL=INFO
-
-# Embedding Model (runs locally via sentence-transformers)
 EMBEDDING_MODEL=all-MiniLM-L6-v2
 
 
