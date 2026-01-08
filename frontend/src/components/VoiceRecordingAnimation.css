@@ -1,0 +1,167 @@
+/* Siri-like Voice Recording Animation Styles */
+
+.voice-recording-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(10px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+.voice-recording-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 30px;
+}
+
+.siri-wave {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 120px;
+}
+
+.wave-bar {
+    width: 6px;
+    background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    border-radius: 10px;
+    animation: wave 1.2s ease-in-out infinite;
+    box-shadow: 0 0 20px rgba(102, 126, 234, 0.5);
+}
+
+.bar-1 {
+    animation-delay: 0s;
+    height: 20px;
+}
+
+.bar-2 {
+    animation-delay: 0.1s;
+    height: 30px;
+}
+
+.bar-3 {
+    animation-delay: 0.2s;
+    height: 50px;
+}
+
+.bar-4 {
+    animation-delay: 0.3s;
+    height: 70px;
+}
+
+.bar-5 {
+    animation-delay: 0.4s;
+    height: 90px;
+}
+
+.bar-6 {
+    animation-delay: 0.5s;
+    height: 70px;
+}
+
+.bar-7 {
+    animation-delay: 0.6s;
+    height: 50px;
+}
+
+.bar-8 {
+    animation-delay: 0.7s;
+    height: 30px;
+}
+
+.bar-9 {
+    animation-delay: 0.8s;
+    height: 20px;
+}
+
+@keyframes wave {
+
+    0%,
+    100% {
+        transform: scaleY(0.5);
+        opacity: 0.6;
+    }
+
+    50% {
+        transform: scaleY(1.5);
+        opacity: 1;
+    }
+}
+
+.recording-text {
+    color: #fff;
+    font-size: 28px;
+    font-weight: 600;
+    margin: 0;
+    animation: pulse-text 2s ease-in-out infinite;
+}
+
+.recording-hint {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 16px;
+    margin: 0;
+    animation: fadeInOut 2s ease-in-out infinite;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes pulse-text {
+
+    0%,
+    100% {
+        opacity: 0.8;
+    }
+
+    50% {
+        opacity: 1;
+    }
+}
+
+@keyframes fadeInOut {
+
+    0%,
+    100% {
+        opacity: 0.5;
+    }
+
+    50% {
+        opacity: 0.9;
+    }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .siri-wave {
+        height: 80px;
+        gap: 4px;
+    }
+
+    .wave-bar {
+        width: 4px;
+    }
+
+    .recording-text {
+        font-size: 24px;
+    }
+
+    .recording-hint {
+        font-size: 14px;
+    }
+}

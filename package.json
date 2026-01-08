@@ -1,0 +1,13 @@
+{
+  "name": "@vishwaraviraaj/agenticai_fa3",
+  "version": "2.0.0",
+  "description": "A full-stack, enterprise-grade Invoice Manager application leveraging modern AI orchestration (LangChain/LangGraph), RAG-based document querying, MCP servers for modular tool execution, and a React TypeScript frontend.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

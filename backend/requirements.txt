@@ -1,0 +1,35 @@
+# Backend Dependencies
+
+# FastAPI & Server
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.7
+
+# Pydantic
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# MongoDB
+pymongo>=4.6.0
+motor>=3.3.0
+
+# LangChain & LLM
+langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-groq>=0.0.1
+langchain-community>=0.0.20
+langgraph>=0.0.20
+
+# Document Processing (Pure Python - No Windows deps)
+pypdf>=3.17.0
+pdfplumber>=0.10.0
+Pillow>=10.0.0
+
+# Embeddings & Vector Search
+sentence-transformers>=2.2.0
+faiss-cpu>=1.7.4
+
+# HTTP & Utilities
+httpx>=0.26.0
+python-dotenv>=1.0.0
+tenacity>=8.2.0
