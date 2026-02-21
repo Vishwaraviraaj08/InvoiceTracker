@@ -1,3 +1,18 @@
+# backend/.env
+
+GROQ_API_KEY=<YOUR_GROQ_API_KEY>
+
+MONGODB_URI=mongodb://localhost:27017
+
+MONGODB_DATABASE=invoice_manager
+
+DEBUG=true
+
+LOG_LEVEL=INFO
+
+EMBEDDING_MODEL=all-MiniLM-L6-v2
+
+
 # Invoice Manager - Production-Grade AI System
 
 A full-stack, enterprise-grade Invoice Manager application leveraging modern AI orchestration (LangChain/LangGraph), RAG-based document querying, MCP servers for modular tool execution, and a React TypeScript frontend.
