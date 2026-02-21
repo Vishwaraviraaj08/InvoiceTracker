@@ -25,6 +25,7 @@ interface StatusBreakdown {
     status: string;
     total_spend: number;
     invoice_count: number;
+    [key: string]: any;
 }
 
 // Spending Trends Chart
@@ -56,7 +57,7 @@ export const SpendingTrendsChart = ({ data }: { data: SpendingTrend[] }) => {
                         borderRadius: '8px',
                         color: 'white'
                     }}
-                    formatter={(value: number) => [`$${value.toLocaleString()}`, 'Spend']}
+                    formatter={(value: any) => [`$${Number(value || 0).toLocaleString()}`, 'Spend']}
                 />
                 <Area
                     type="monotone"
@@ -100,7 +101,7 @@ export const TopVendorsChart = ({ data }: { data: Vendor[] }) => {
                         borderRadius: '8px',
                         color: 'white'
                     }}
-                    formatter={(value: number) => [`$${value.toLocaleString()}`, 'Total Spend']}
+                    formatter={(value: any) => [`$${Number(value || 0).toLocaleString()}`, 'Total Spend']}
                 />
                 <Bar dataKey="total_spend" fill="#764ba2" radius={[0, 4, 4, 0]}>
                     {data.map((_, index) => (
@@ -140,7 +141,7 @@ export const StatusBreakdownChart = ({ data }: { data: StatusBreakdown[] }) => {
                     paddingAngle={5}
                     dataKey="invoice_count"
                     nameKey="status"
-                    label={({ status, percent }) => `${status} ${(percent * 100).toFixed(0)}%`}
+                    label={({ status, percent }: any) => `${status} ${((percent || 0) * 100).toFixed(0)}%`}
                 >
                     {data.map((entry, index) => (
                         <Cell

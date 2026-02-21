@@ -1,59 +1,55 @@
-"""
-MongoDB Connection Manager
-Async MongoDB client using Motor driver
-"""
-
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from pymongo.errors import ConnectionFailure
 import logging
-
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 
-class MongoDB:
-    """MongoDB connection manager"""
-    
-    client: AsyncIOMotorClient | None = None
-    database: AsyncIOMotorDatabase | None = None
-    
-    @classmethod
-    async def connect(cls) -> None:
-        """Establish MongoDB connection"""
+class MongoDBManager:
+    """Manages MongoDB connection lifecycle."""
+
+    def __init__(self):
+        self.client: AsyncIOMotorClient | None = None
+        self.database: AsyncIOMotorDatabase | None = None
+        self._connected = False
+
+    async def connect(self):
+        """Connect to MongoDB."""
         settings = get_settings()
-        
         try:
-            cls.client = AsyncIOMotorClient(settings.mongodb_uri)
-            # Verify connection
-            await cls.client.admin.command('ping')
-            cls.database = cls.client[settings.mongodb_database]
+            self.client = AsyncIOMotorClient(settings.mongodb_uri)
+            self.database = self.client[settings.mongodb_database]
+            await self.client.admin.command('ping')
+            self._connected = True
             logger.info(f"Connected to MongoDB: {settings.mongodb_database}")
-        except ConnectionFailure as e:
+        except Exception as e:
             logger.error(f"MongoDB connection failed: {e}")
             raise
-    
-    @classmethod
-    async def disconnect(cls) -> None:
-        """Close MongoDB connection"""
-        if cls.client:
-            cls.client.close()
+
+    async def disconnect(self):
+        """Disconnect from MongoDB."""
+        if self.client is not None:
+            self.client.close()
+            self._connected = False
             logger.info("Disconnected from MongoDB")
-    
-    @classmethod
-    def get_database(cls) -> AsyncIOMotorDatabase:
-        """Get database instance"""
-        if cls.database is None:
+
+    def get_database(self) -> AsyncIOMotorDatabase:
+        """Get the database instance."""
+        if self.database is None:
             raise RuntimeError("Database not connected. Call connect() first.")
-        return cls.database
-    
-    @classmethod
-    def get_collection(cls, name: str):
-        """Get a collection by name"""
-        return cls.get_database()[name]
+        return self.database
+
+    def get_collection(self, name: str):
+        """Get a collection by name."""
+        return self.get_database()[name]
 
 
-def get_database() -> AsyncIOMotorDatabase:
-    """Standalone helper to get database instance"""
-    return MongoDB.get_database()
+MongoDB = MongoDBManager()
+_db_manager = MongoDB
 
+
+def get_database():
+    """Get the active database instance (sync helper)."""
+    if _db_manager is None or not _db_manager._connected:
+        raise RuntimeError("Database not initialized")
+    return _db_manager.get_database()

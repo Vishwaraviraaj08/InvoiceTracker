@@ -1,8 +1,3 @@
-"""
-Analytics API Routes
-Provides endpoints for dashboard analytics and insights
-"""
-
 from fastapi import APIRouter, HTTPException
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
@@ -18,18 +13,15 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 @router.get("/summary")
 async def get_summary():
-    """Get overall analytics summary"""
+    """Get overall analytics summary."""
     db = get_database()
-    
-    # Get all documents
     documents = await db.documents.find().to_list(length=1000)
-    
+
     total_invoices = len(documents)
     validated_count = sum(1 for d in documents if d.get("validation_status") == "valid")
     invalid_count = sum(1 for d in documents if d.get("validation_status") == "invalid")
     pending_count = sum(1 for d in documents if d.get("validation_status") == "pending")
-    
-    # Calculate total spend from metadata
+
     total_spend = 0.0
     for doc in documents:
         metadata = doc.get("metadata", {})
@@ -38,10 +30,9 @@ async def get_summary():
                 total_spend += float(metadata["total"])
             except (ValueError, TypeError):
                 pass
-    
-    # Average invoice value
+
     avg_value = total_spend / total_invoices if total_invoices > 0 else 0
-    
+
     return {
         "total_invoices": total_invoices,
         "validated_count": validated_count,
@@ -55,21 +46,15 @@ async def get_summary():
 
 @router.get("/spending-trends")
 async def get_spending_trends(months: int = 6):
-    """Get monthly spending trends"""
+    """Get monthly spending trends."""
     db = get_database()
-    
-    # Calculate date range
     end_date = datetime.now()
     start_date = end_date - timedelta(days=months * 30)
-    
-    # Get documents within range
-    documents = await db.documents.find({
-        "upload_timestamp": {"$gte": start_date}
-    }).to_list(length=1000)
-    
-    # Group by month
+
+    documents = await db.documents.find({"upload_timestamp": {"$gte": start_date}}).to_list(length=1000)
+
     monthly_data = defaultdict(lambda: {"total": 0, "count": 0})
-    
+
     for doc in documents:
         upload_date = doc.get("upload_timestamp")
         if upload_date:
@@ -81,12 +66,10 @@ async def get_spending_trends(months: int = 6):
                     monthly_data[month_key]["count"] += 1
                 except (ValueError, TypeError):
                     monthly_data[month_key]["count"] += 1
-    
-    # Convert to sorted list
+
     trends = []
     for month_key in sorted(monthly_data.keys()):
         data = monthly_data[month_key]
-        # Parse month for display
         year, month = month_key.split("-")
         month_name = datetime(int(year), int(month), 1).strftime("%b %Y")
         trends.append({
@@ -95,19 +78,18 @@ async def get_spending_trends(months: int = 6):
             "total_spend": round(data["total"], 2),
             "invoice_count": data["count"]
         })
-    
+
     return {"trends": trends, "months_included": months}
 
 
 @router.get("/top-vendors")
 async def get_top_vendors(limit: int = 5):
-    """Get top vendors by total spend"""
+    """Get top vendors by total spend."""
     db = get_database()
-    
     documents = await db.documents.find().to_list(length=1000)
-    
+
     vendor_totals = defaultdict(lambda: {"total": 0, "count": 0})
-    
+
     for doc in documents:
         metadata = doc.get("metadata", {})
         vendor = metadata.get("vendor", "Unknown")
@@ -118,21 +100,12 @@ async def get_top_vendors(limit: int = 5):
                 vendor_totals[vendor]["count"] += 1
             except (ValueError, TypeError):
                 vendor_totals[vendor]["count"] += 1
-    
-    # Sort by total spend and get top N
-    sorted_vendors = sorted(
-        vendor_totals.items(),
-        key=lambda x: x[1]["total"],
-        reverse=True
-    )[:limit]
-    
+
+    sorted_vendors = sorted(vendor_totals.items(), key=lambda x: x[1]["total"], reverse=True)[:limit]
+
     return {
         "vendors": [
-            {
-                "name": vendor,
-                "total_spend": round(data["total"], 2),
-                "invoice_count": data["count"]
-            }
+            {"name": vendor, "total_spend": round(data["total"], 2), "invoice_count": data["count"]}
             for vendor, data in sorted_vendors
         ]
     }
@@ -140,13 +113,12 @@ async def get_top_vendors(limit: int = 5):
 
 @router.get("/spend-by-status")
 async def get_spend_by_status():
-    """Get spending breakdown by validation status"""
+    """Get spending breakdown by validation status."""
     db = get_database()
-    
     documents = await db.documents.find().to_list(length=1000)
-    
+
     status_data = defaultdict(lambda: {"total": 0, "count": 0})
-    
+
     for doc in documents:
         status = doc.get("validation_status", "pending")
         metadata = doc.get("metadata", {})
@@ -156,14 +128,10 @@ async def get_spend_by_status():
             status_data[status]["count"] += 1
         except (ValueError, TypeError):
             status_data[status]["count"] += 1
-    
+
     return {
         "breakdown": [
-            {
-                "status": status,
-                "total_spend": round(data["total"], 2),
-                "invoice_count": data["count"]
-            }
+            {"status": status, "total_spend": round(data["total"], 2), "invoice_count": data["count"]}
             for status, data in status_data.items()
         ]
     }
@@ -171,43 +139,37 @@ async def get_spend_by_status():
 
 @router.get("/ai-insights")
 async def get_ai_insights():
-    """Generate AI-powered insights about spending patterns"""
+    """Generate AI-powered insights about spending patterns."""
     db = get_database()
-    
-    # Get summary data
     documents = await db.documents.find().to_list(length=1000)
-    
+
     if not documents:
         return {
             "insights": "No invoices uploaded yet. Start by uploading some invoices to get AI-powered insights!",
             "generated_at": datetime.now().isoformat()
         }
-    
-    # Prepare data summary for LLM
+
     total_invoices = len(documents)
     vendor_counts = defaultdict(int)
     monthly_totals = defaultdict(float)
     total_spend = 0
-    
+
     for doc in documents:
         metadata = doc.get("metadata", {})
         vendor = metadata.get("vendor", "Unknown")
         vendor_counts[vendor] += 1
-        
         try:
             amount = float(metadata.get("total", 0))
             total_spend += amount
-            
             upload_date = doc.get("upload_timestamp")
             if upload_date:
                 month_key = upload_date.strftime("%B %Y")
                 monthly_totals[month_key] += amount
         except (ValueError, TypeError):
             pass
-    
+
     top_vendors = sorted(vendor_counts.items(), key=lambda x: x[1], reverse=True)[:3]
-    
-    # Create context for LLM
+
     context = f"""Invoice Analytics Summary:
 - Total Invoices: {total_invoices}
 - Total Spend: ${total_spend:,.2f}
@@ -215,14 +177,14 @@ async def get_ai_insights():
 - Top Vendors: {', '.join([f'{v[0]} ({v[1]} invoices)' for v in top_vendors])}
 - Monthly Breakdown: {dict(monthly_totals)}
 """
-    
+
     try:
         groq_client = get_groq_client()
         result = await groq_client.invoke(
             messages=[{"role": "user", "content": "Analyze this invoice data and provide 3-4 brief, actionable insights about spending patterns, trends, or recommendations. Be specific with numbers."}],
             system_prompt=f"You are a financial analyst. Based on this data, provide concise insights:\n\n{context}"
         )
-        
+
         return {
             "insights": result["content"],
             "data_summary": {

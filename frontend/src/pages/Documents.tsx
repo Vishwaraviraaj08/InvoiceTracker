@@ -8,15 +8,18 @@ import { StatusBadge, EmptyState } from '../components/Common';
 import PDFViewer from '../components/PDFViewer';
 import ForceValidateModal from '../components/ForceValidateModal';
 import { RenameModal, DeleteModal } from '../components/ConfirmModals';
+import { useNotifications } from '../context/NotificationContext';
 import type { Document, ValidationResponse, ValidationIssue } from '../types';
 
 const Documents = () => {
     const navigate = useNavigate();
+    const { showError, showSuccess } = useNotifications();
     const [documents, setDocuments] = useState<Document[]>([]);
     const [loading, setLoading] = useState(true);
     const [validating, setValidating] = useState<string | null>(null);
     const [validationResult, setValidationResult] = useState<ValidationResponse | null>(null);
     const [showValidation, setShowValidation] = useState(false);
+    const [validatedDocId, setValidatedDocId] = useState<string | null>(null);
 
     // PDF Viewer state
     const [showPDF, setShowPDF] = useState(false);
@@ -49,7 +52,7 @@ const Documents = () => {
             const docs = await getDocuments();
             setDocuments(docs);
         } catch (error) {
-            console.error('Failed to load documents:', error);
+            showError('Load Failed', 'Could not load documents. Please check your connection and try again.');
         } finally {
             setLoading(false);
         }
@@ -57,14 +60,15 @@ const Documents = () => {
 
     const handleValidate = async (docId: string) => {
         setValidating(docId);
+        setValidatedDocId(docId);
         try {
             const result = await validateInvoice(docId);
             setValidationResult(result);
             setShowValidation(true);
-            // Refresh documents to update status
             loadDocuments();
-        } catch (error) {
-            console.error('Validation failed:', error);
+        } catch (error: any) {
+            const msg = error?.response?.data?.message || error?.message || 'Unknown error';
+            showError('Validation Failed', `Could not validate the document. ${msg}`);
         } finally {
             setValidating(null);
         }
@@ -79,10 +83,16 @@ const Documents = () => {
     // Actual delete action
     const handleDeleteConfirm = async () => {
         if (!deleteDoc) return;
-        await deleteDocument(deleteDoc.id);
-        setShowDelete(false);
-        setDeleteDoc(null);
-        loadDocuments();
+        try {
+            await deleteDocument(deleteDoc.id);
+            showSuccess('Deleted', `"${deleteDoc.filename}" has been deleted.`);
+            loadDocuments();
+        } catch (error) {
+            showError('Delete Failed', 'Could not delete the document. Please try again.');
+        } finally {
+            setShowDelete(false);
+            setDeleteDoc(null);
+        }
     };
 
     const handleOpenPDF = (docId: string, filename: string) => {
@@ -97,8 +107,8 @@ const Documents = () => {
 
     const handleOpenForceValidate = () => {
         if (validationResult) {
-            setForceValidateDoc(validationResult.document_id);
-            setForceValidateIssues(validationResult.issues);
+            setForceValidateDoc(validationResult.document_id || validatedDocId || '');
+            setForceValidateIssues(validationResult.issues || []);
             setShowValidation(false);
             setShowForceValidate(true);
         }
@@ -106,11 +116,16 @@ const Documents = () => {
 
     const handleForceValidate = async (corrections: Record<string, string>) => {
         if (!forceValidateDoc) return;
-
-        await forceValidate(forceValidateDoc, corrections);
-        setShowForceValidate(false);
-        setForceValidateDoc(null);
-        loadDocuments();
+        try {
+            await forceValidate(forceValidateDoc, corrections);
+            showSuccess('Force Validated', 'Document has been marked as valid with your corrections.');
+            loadDocuments();
+        } catch (error) {
+            showError('Force Validate Failed', 'Could not force validate the document. Please try again.');
+        } finally {
+            setShowForceValidate(false);
+            setForceValidateDoc(null);
+        }
     };
 
     // Open rename modal
@@ -122,20 +137,30 @@ const Documents = () => {
     // Actual rename action
     const handleRenameConfirm = async (newName: string) => {
         if (!renameDoc) return;
-        await renameDocument(renameDoc.id, newName);
-        setShowRename(false);
-        setRenameDoc(null);
-        loadDocuments();
+        try {
+            await renameDocument(renameDoc.id, newName);
+            showSuccess('Renamed', `Document renamed to "${newName}".`);
+            loadDocuments();
+        } catch (error) {
+            showError('Rename Failed', 'Could not rename the document. Please try again.');
+        } finally {
+            setShowRename(false);
+            setRenameDoc(null);
+        }
     };
 
     const formatDate = (dateStr: string) => {
-        return new Date(dateStr).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-        });
+        try {
+            return new Date(dateStr).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+            });
+        } catch {
+            return 'Unknown date';
+        }
     };
 
     if (loading) {
@@ -275,7 +300,7 @@ const Documents = () => {
                                 </h5>
                             </div>
 
-                            {validationResult.issues.length > 0 && (
+                            {(validationResult.issues?.length ?? 0) > 0 && (
                                 <div>
                                     <h6>Issues:</h6>
                                     <ul className="list-unstyled">
@@ -303,7 +328,7 @@ const Documents = () => {
                     )}
                 </Modal.Body>
                 <Modal.Footer>
-                    {validationResult && !validationResult.valid && (
+                    {validationResult && (!validationResult.valid || (validationResult.issues && validationResult.issues.length > 0)) && (
                         <Button className="btn-gradient" onClick={handleOpenForceValidate}>
                             🔧 Force Validate
                         </Button>

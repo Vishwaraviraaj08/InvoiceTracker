@@ -624,3 +624,149 @@ a:hover {
 .glass-card .table-sm th {
   padding: 0.5rem !important;
 }
+
+/* ===== Force Validate Modal with PDF Preview ===== */
+.force-validate-dialog {
+  max-width: 95vw !important;
+}
+
+.force-validate-layout {
+  display: flex;
+  min-height: 65vh;
+  max-height: 75vh;
+  transition: all 0.3s ease;
+}
+
+.force-validate-layout.with-preview .fv-pdf-panel {
+  flex: 1 1 55%;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.force-validate-layout.with-preview .fv-corrections-panel {
+  flex: 1 1 45%;
+  overflow-y: auto;
+}
+
+.force-validate-layout.no-preview .fv-corrections-panel {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.fv-pdf-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #1a1a2e;
+}
+
+.fv-issues-list {
+  max-height: calc(65vh - 200px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* Correction items */
+.correction-item {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  transition: border-color 0.2s ease;
+}
+
+.correction-item:hover {
+  border-color: rgba(102, 126, 234, 0.3);
+}
+
+.correction-field {
+  font-weight: 600;
+  color: #e0e0ff;
+  font-size: 0.95rem;
+}
+
+.correction-input {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  color: white;
+  font-size: 0.9rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.correction-input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+}
+
+.correction-input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* Scrollbar styling for corrections panel */
+.fv-corrections-panel::-webkit-scrollbar,
+.fv-issues-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.fv-corrections-panel::-webkit-scrollbar-track,
+.fv-issues-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.fv-corrections-panel::-webkit-scrollbar-thumb,
+.fv-issues-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.fv-corrections-panel::-webkit-scrollbar-thumb:hover,
+.fv-issues-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* ========== Voice Mode Toggle (Navbar) ========== */
+.voice-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.5);
+  padding: 6px 14px;
+  border-radius: 25px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+  margin-left: 8px;
+}
+
+.voice-mode-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.voice-mode-toggle.active {
+  background: rgba(102, 126, 234, 0.2);
+  border-color: rgba(102, 126, 234, 0.5);
+  color: #a5b4fc;
+  box-shadow: 0 0 12px rgba(102, 126, 234, 0.2);
+}
+
+.voice-mode-toggle.active:hover {
+  background: rgba(102, 126, 234, 0.3);
+  box-shadow: 0 0 18px rgba(102, 126, 234, 0.3);
+}
+
+.voice-mode-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}

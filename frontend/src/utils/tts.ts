@@ -2,7 +2,6 @@
 
 export class TextToSpeechService {
     private synthesis: SpeechSynthesis;
-    private currentUtterance: SpeechSynthesisUtterance | null = null;
     private onStartCallback: (() => void) | null = null;
     private onEndCallback: (() => void) | null = null;
 
@@ -46,7 +45,6 @@ export class TextToSpeechService {
             if (this.onEndCallback) {
                 this.onEndCallback();
             }
-            this.currentUtterance = null;
         };
 
         utterance.onerror = (event) => {
@@ -54,10 +52,8 @@ export class TextToSpeechService {
             if (this.onEndCallback) {
                 this.onEndCallback();
             }
-            this.currentUtterance = null;
         };
 
-        this.currentUtterance = utterance;
         this.synthesis.speak(utterance);
     }
 
@@ -65,7 +61,6 @@ export class TextToSpeechService {
         if (this.synthesis.speaking) {
             this.synthesis.cancel();
         }
-        this.currentUtterance = null;
     }
 
     pause() {

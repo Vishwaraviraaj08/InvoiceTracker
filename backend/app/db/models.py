@@ -1,175 +1,120 @@
-"""
-Database Models
-Pydantic models for MongoDB documents with validation
-"""
-
+from typing import Optional, List, Dict, Any
 from datetime import datetime
-from typing import Optional, List, Any
 from pydantic import BaseModel, Field
 from bson import ObjectId
 
 
 class PyObjectId(str):
-    """Custom ObjectId type for Pydantic"""
-    
+    """Custom type for MongoDB ObjectId serialization."""
+
     @classmethod
     def __get_validators__(cls):
         yield cls.validate
-    
+
     @classmethod
-    def validate(cls, v, info=None):
+    def validate(cls, v):
         if isinstance(v, ObjectId):
             return str(v)
-        if isinstance(v, str) and ObjectId.is_valid(v):
-            return v
-        raise ValueError("Invalid ObjectId")
+        return str(v)
 
 
 class DocumentMetadata(BaseModel):
-    """Extracted metadata from invoice"""
     vendor: Optional[str] = None
     invoice_number: Optional[str] = None
     date: Optional[datetime] = None
+    due_date: Optional[datetime] = None
     total: Optional[float] = None
-    currency: Optional[str] = None
-    line_items: Optional[List[dict]] = None
+    currency: str = "USD"
+    line_items: List[Dict[str, Any]] = Field(default_factory=list)
+    tax: Optional[float] = None
+    subtotal: Optional[float] = None
 
 
 class DocumentModel(BaseModel):
-    """Invoice document model"""
-    id: Optional[str] = Field(default=None, alias="_id")
+    id: Optional[str] = None
     filename: str
-    file_type: str  # pdf, image, text
-    raw_text: str
-    file_data: Optional[bytes] = None  # Original file bytes for PDF viewing
+    file_type: str
+    raw_text: str = ""
+    file_data: Optional[bytes] = None
     metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
     upload_timestamp: datetime = Field(default_factory=datetime.utcnow)
-    validation_status: str = "pending"  # pending, valid, invalid, needs_review
-    forced_valid: bool = False  # True if manually validated by admin
-    admin_corrections: Optional[dict] = None  # User-provided corrections
-    
+    validation_status: str = "pending"
+    forced_valid: bool = False
+    admin_corrections: Optional[Dict[str, Any]] = None
+    admin_notes: Optional[str] = None
+
     class Config:
-        populate_by_name = True
-        json_encoders = {ObjectId: str}
+        arbitrary_types_allowed = True
 
 
 class EmbeddingChunk(BaseModel):
-    """Document embedding chunk"""
-    id: Optional[str] = Field(default=None, alias="_id")
+    id: Optional[str] = None
     document_id: str
     chunk_index: int
-    chunk_text: str
+    text: str
     embedding: List[float]
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    
+
     class Config:
-        populate_by_name = True
-
-
-class ToolCall(BaseModel):
-    """Tool call information for chat messages"""
-    tool_name: str
-    args: dict = {}
-    result: Optional[Any] = None
+        arbitrary_types_allowed = True
 
 
 class ChatMessage(BaseModel):
-    """Chat message model"""
-    id: Optional[str] = Field(default=None, alias="_id")
+    id: Optional[str] = None
     session_id: str
-    document_id: Optional[str] = None  # None for global chat
-    role: str  # user, assistant, system
+    document_id: Optional[str] = None
+    role: str
     content: str
-    tool_calls: Optional[List[ToolCall]] = None
-    retrieved_chunks: Optional[List[str]] = None  # For RAG queries
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    
-    class Config:
-        populate_by_name = True
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class ValidationIssue(BaseModel):
-    """Single validation issue"""
     field: str
-    severity: str  # error, warning, info
+    severity: str
     message: str
 
 
 class ValidationResult(BaseModel):
-    """Validation result model"""
-    id: Optional[str] = Field(default=None, alias="_id")
+    id: Optional[str] = None
     document_id: str
     valid: bool
-    issues: List[ValidationIssue] = []
+    issues: List[ValidationIssue] = Field(default_factory=list)
+    needs_review: bool = False
+    review_reason: Optional[str] = None
     validated_at: datetime = Field(default_factory=datetime.utcnow)
-    model_used: str
-    
-    class Config:
-        populate_by_name = True
+    model_used: Optional[str] = None
 
 
-# Request/Response Models for API
-
-class UploadResponse(BaseModel):
-    """Response for document upload"""
-    doc_id: str
-    filename: str
-    status: str
-    message: str
-
-
-class DocumentListItem(BaseModel):
-    """Document list item"""
-    id: str
-    filename: str
-    file_type: str
-    validation_status: str
-    upload_timestamp: datetime
-    metadata: DocumentMetadata
+class ValidationResponse(BaseModel):
+    success: bool
+    valid: Optional[bool] = None
+    issues: List[Dict[str, Any]] = Field(default_factory=list)
+    needs_review: bool = False
+    review_reason: Optional[str] = None
+    message: Optional[str] = None
 
 
 class ChatRequest(BaseModel):
-    """Chat request model"""
     message: str
     session_id: Optional[str] = None
 
 
-class ChatResponse(BaseModel):
-    """Chat response model"""
-    response: str
-    session_id: str
-    tool_used: Optional[str] = None
-    sources: Optional[List[str]] = None
-    needs_clarification: bool = False
-    clarification_question: Optional[str] = None
-
-
-class ValidationResponse(BaseModel):
-    """Validation response model"""
+class DocumentChatRequest(BaseModel):
+    message: str
+    session_id: Optional[str] = None
     document_id: str
-    valid: bool
-    issues: List[ValidationIssue]
-    needs_review: bool = False
-    review_reason: Optional[str] = None
-    suggested_corrections: Optional[List[dict]] = None
 
 
-class SuggestedCorrection(BaseModel):
-    """AI-suggested correction for an issue"""
-    field: str
-    current_value: Optional[str] = None
-    suggested_value: str
-    reason: str
+class UploadResponse(BaseModel):
+    success: bool
+    document_id: Optional[str] = None
+    filename: Optional[str] = None
+    file_type: Optional[str] = None
+    text_length: Optional[int] = None
+    chunks_indexed: Optional[int] = None
+    message: Optional[str] = None
 
 
 class ForceValidateRequest(BaseModel):
-    """Request for force validation with manual corrections"""
-    corrections: dict  # field: corrected_value pairs
-    admin_notes: Optional[str] = None
-
-
-class EditPDFRequest(BaseModel):
-    """Request to edit PDF content"""
-    field: str
-    old_value: str
-    new_value: str
+    corrections: Dict[str, Any] = Field(default_factory=dict)
+    admin_notes: str = ""

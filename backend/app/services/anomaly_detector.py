@@ -1,197 +1,144 @@
-"""
-Anomaly Detection Service
-Detects duplicate invoices and unusual prices
-"""
-
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from datetime import datetime
+
+import numpy as np
 from rapidfuzz import fuzz
 
 from app.db.mongodb import get_database
 
 logger = logging.getLogger(__name__)
 
+DUPLICATE_THRESHOLD = 85
+PRICE_ANOMALY_MULTIPLIER = 2.0
+
 
 class AnomalyDetector:
-    """Detects anomalies in invoices such as duplicates and unusual prices"""
-    
-    # Thresholds
-    DUPLICATE_SIMILARITY_THRESHOLD = 85  # % similarity to consider duplicate
-    PRICE_ANOMALY_MULTIPLIER = 3.0  # Flag if price is 3x above avg for vendor
-    MIN_SAMPLES_FOR_AVERAGE = 2  # Need at least 2 invoices to calculate average
-    
-    async def detect_anomalies(self, document_id: str) -> Dict[str, Any]:
-        """
-        Run all anomaly detection on a document.
-        
-        Returns:
-            Dict with detected anomalies
-        """
+    """Detects anomalies in invoices: duplicates and price outliers."""
+
+    async def check_duplicates(self, document_id: str) -> List[Dict[str, Any]]:
+        """Check for duplicate invoices using fuzzy matching."""
         db = get_database()
-        
-        # Get the target document
-        doc = await db.documents.find_one({"id": document_id})
-        if not doc:
-            return {"anomalies": [], "error": "Document not found"}
-        
-        anomalies = []
-        
-        # Check for duplicates
-        duplicate_result = await self.detect_duplicates(doc)
-        if duplicate_result:
-            anomalies.append(duplicate_result)
-        
-        # Check for price anomalies
-        price_result = await self.detect_price_anomaly(doc)
-        if price_result:
-            anomalies.append(price_result)
-        
-        return {
-            "document_id": document_id,
-            "anomalies": anomalies,
-            "anomaly_count": len(anomalies),
-            "checked_at": datetime.now().isoformat()
-        }
-    
-    async def detect_duplicates(self, doc: Dict) -> Optional[Dict]:
-        """Check if this document is similar to existing ones"""
+
+        target_doc = await db.documents.find_one({"id": document_id})
+        if not target_doc:
+            return []
+
+        target_metadata = target_doc.get("metadata", {})
+        target_vendor = target_metadata.get("vendor", "")
+        target_invoice_num = target_metadata.get("invoice_number", "")
+        target_total = target_metadata.get("total", 0)
+
+        other_docs = await db.documents.find(
+            {"id": {"$ne": document_id}}
+        ).to_list(length=100)
+
+        duplicates = []
+        for doc in other_docs:
+            doc_metadata = doc.get("metadata", {})
+            doc_vendor = doc_metadata.get("vendor", "")
+            doc_invoice_num = doc_metadata.get("invoice_number", "")
+            doc_total = doc_metadata.get("total", 0)
+
+            vendor_score = fuzz.ratio(target_vendor.lower(), doc_vendor.lower()) if target_vendor and doc_vendor else 0
+            invoice_num_score = fuzz.ratio(target_invoice_num.lower(), doc_invoice_num.lower()) if target_invoice_num and doc_invoice_num else 0
+            total_match = 100 if target_total and doc_total and abs(float(target_total) - float(doc_total)) < 0.01 else 0
+
+            overall_score = (vendor_score * 0.3 + invoice_num_score * 0.4 + total_match * 0.3)
+
+            if overall_score >= DUPLICATE_THRESHOLD:
+                duplicates.append({
+                    "document_id": doc.get("id", str(doc.get("_id", ""))),
+                    "filename": doc.get("filename", ""),
+                    "similarity_score": round(overall_score, 2),
+                    "matching_fields": {
+                        "vendor": {"score": vendor_score, "value": doc_vendor},
+                        "invoice_number": {"score": invoice_num_score, "value": doc_invoice_num},
+                        "total": {"match": total_match > 0, "value": doc_total}
+                    }
+                })
+
+        duplicates.sort(key=lambda x: x["similarity_score"], reverse=True)
+        return duplicates
+
+    async def check_price_anomalies(self, document_id: str) -> Optional[Dict[str, Any]]:
+        """Check for price anomalies by comparing to vendor average."""
         db = get_database()
-        
-        doc_id = doc.get("id", str(doc.get("_id", "")))
-        metadata = doc.get("metadata", {})
-        
-        # Get all other documents
-        other_docs = await db.documents.find({"id": {"$ne": doc_id}}).to_list(length=500)
-        
-        if not other_docs:
+
+        target_doc = await db.documents.find_one({"id": document_id})
+        if not target_doc:
             return None
-        
-        best_match = None
-        best_score = 0
-        
-        for other in other_docs:
-            other_meta = other.get("metadata", {})
-            
-            # Calculate similarity score based on multiple factors
-            score = 0
-            factors = 0
-            
-            # Invoice number similarity
-            if metadata.get("invoice_number") and other_meta.get("invoice_number"):
-                inv_sim = fuzz.ratio(
-                    str(metadata["invoice_number"]).lower(),
-                    str(other_meta["invoice_number"]).lower()
-                )
-                score += inv_sim
-                factors += 1
-            
-            # Vendor similarity
-            if metadata.get("vendor") and other_meta.get("vendor"):
-                vendor_sim = fuzz.ratio(
-                    str(metadata["vendor"]).lower(),
-                    str(other_meta["vendor"]).lower()
-                )
-                score += vendor_sim
-                factors += 1
-            
-            # Total amount match (exact match = high weight)
-            if metadata.get("total") and other_meta.get("total"):
-                try:
-                    if float(metadata["total"]) == float(other_meta["total"]):
-                        score += 100
-                        factors += 1
-                except (ValueError, TypeError):
-                    pass
-            
-            # Date match
-            if metadata.get("date") and other_meta.get("date"):
-                if str(metadata["date"]) == str(other_meta["date"]):
-                    score += 100
-                    factors += 1
-            
-            # Calculate average similarity
-            if factors > 0:
-                avg_score = score / factors
-                if avg_score > best_score:
-                    best_score = avg_score
-                    best_match = other
-        
-        # If similarity exceeds threshold, flag as potential duplicate
-        if best_score >= self.DUPLICATE_SIMILARITY_THRESHOLD and best_match:
-            return {
-                "type": "duplicate",
-                "severity": "warning" if best_score < 95 else "high",
-                "message": f"Potential duplicate of invoice {best_match.get('filename', 'Unknown')}",
-                "similarity_score": round(best_score, 1),
-                "similar_document_id": best_match.get("id", str(best_match.get("_id", ""))),
-                "similar_document_name": best_match.get("filename", "Unknown")
-            }
-        
-        return None
-    
-    async def detect_price_anomaly(self, doc: Dict) -> Optional[Dict]:
-        """Check if price is unusually high for this vendor"""
-        db = get_database()
-        
-        metadata = doc.get("metadata", {})
-        vendor = metadata.get("vendor")
-        total = metadata.get("total")
-        
-        if not vendor or not total:
+
+        target_metadata = target_doc.get("metadata", {})
+        target_vendor = target_metadata.get("vendor", "")
+        target_total = target_metadata.get("total", 0)
+
+        if not target_vendor or not target_total:
             return None
-        
+
         try:
-            current_total = float(total)
+            target_total = float(target_total)
         except (ValueError, TypeError):
             return None
-        
-        # Get historical invoices from same vendor
-        doc_id = doc.get("id", str(doc.get("_id", "")))
+
         vendor_docs = await db.documents.find({
-            "id": {"$ne": doc_id},
-            "metadata.vendor": {"$regex": vendor, "$options": "i"}
+            "id": {"$ne": document_id},
+            "metadata.vendor": {"$regex": target_vendor, "$options": "i"}
         }).to_list(length=100)
-        
-        if len(vendor_docs) < self.MIN_SAMPLES_FOR_AVERAGE:
+
+        if len(vendor_docs) < 2:
             return None
-        
-        # Calculate average and detect anomaly
+
         totals = []
-        for vdoc in vendor_docs:
-            vmeta = vdoc.get("metadata", {})
-            if vmeta.get("total"):
-                try:
-                    totals.append(float(vmeta["total"]))
-                except (ValueError, TypeError):
-                    pass
-        
+        for doc in vendor_docs:
+            total = doc.get("metadata", {}).get("total", 0)
+            try:
+                totals.append(float(total))
+            except (ValueError, TypeError):
+                continue
+
         if not totals:
             return None
-        
-        avg_total = sum(totals) / len(totals)
-        
-        # Flag if current total is significantly higher than average
-        if current_total > avg_total * self.PRICE_ANOMALY_MULTIPLIER:
+
+        avg_total = np.mean(totals)
+        std_total = np.std(totals) if len(totals) > 1 else 0
+
+        is_anomaly = target_total > avg_total * PRICE_ANOMALY_MULTIPLIER
+        if std_total > 0:
+            z_score = (target_total - avg_total) / std_total
+            is_anomaly = is_anomaly or abs(z_score) > 2
+
+        if is_anomaly:
             return {
-                "type": "price_anomaly",
-                "severity": "warning",
-                "message": f"Amount ${current_total:,.2f} is {current_total/avg_total:.1f}x higher than average (${avg_total:,.2f}) for {vendor}",
-                "current_amount": current_total,
-                "average_amount": round(avg_total, 2),
-                "vendor": vendor,
-                "multiplier": round(current_total / avg_total, 1)
+                "is_anomaly": True,
+                "current_total": target_total,
+                "vendor_average": round(avg_total, 2),
+                "vendor_std": round(std_total, 2),
+                "deviation_percentage": round(((target_total - avg_total) / avg_total) * 100, 1) if avg_total > 0 else 0,
+                "sample_size": len(totals),
+                "message": f"Total ${target_total} is significantly higher than the vendor average of ${avg_total:.2f}"
             }
-        
         return None
 
+    async def run_all_checks(self, document_id: str) -> Dict[str, Any]:
+        """Run all anomaly checks on a document."""
+        duplicates = await self.check_duplicates(document_id)
+        price_anomaly = await self.check_price_anomalies(document_id)
 
-# Global instance
+        return {
+            "document_id": document_id,
+            "has_anomalies": bool(duplicates or price_anomaly),
+            "duplicates": duplicates,
+            "price_anomaly": price_anomaly,
+            "checked_at": datetime.utcnow().isoformat()
+        }
+
+
 _anomaly_detector: AnomalyDetector | None = None
 
 
 def get_anomaly_detector() -> AnomalyDetector:
-    """Get or create anomaly detector instance"""
+    """Get or create anomaly detector instance."""
     global _anomaly_detector
     if _anomaly_detector is None:
         _anomaly_detector = AnomalyDetector()

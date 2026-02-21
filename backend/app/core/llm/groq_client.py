@@ -1,210 +1,131 @@
-"""
-Groq LLM Client
-Manages Groq API calls with model rotation, retry logic, and fallback mechanisms
-"""
-
 import logging
 import random
 import re
-from typing import Optional, List, Dict, Any
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type
-)
-from langchain_groq import ChatGroq
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
-
+from typing import Dict, Any, List, Optional
+from groq import AsyncGroq
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-
-def clean_llm_response(text: str) -> str:
-    """
-    Clean LLM response by removing thinking tags and other artifacts.
-    Strips <think>...</think> blocks that some models output.
-    """
-    if not text:
-        return text
-    
-    # Remove <think>...</think> blocks (including multiline)
-    cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    
-    # Remove any remaining orphaned tags
-    cleaned = re.sub(r'</?think>', '', cleaned, flags=re.IGNORECASE)
-    
-    # Clean up extra whitespace
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-    
-    return cleaned.strip()
-
-
-class GroqClientError(Exception):
-    """Custom exception for Groq client errors"""
-    pass
+AVAILABLE_MODELS = [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "llama-3-groq-70b-8192-tool-use-preview",
+]
 
 
 class GroqClient:
-    """
-    Groq LLM client with:
-    - Random model selection from pool for load distribution
-    - Retry logic with exponential backoff
-    - Fallback to next model on failure
-    """
-    
+    """Manages Groq API interactions with retry logic and model fallback."""
+
     def __init__(self):
-        self.settings = get_settings()
-        self.models = self.settings.groq_models.copy()
-        self._current_model_index = 0
-    
+        settings = get_settings()
+        self.client = AsyncGroq(api_key=settings.groq_api_key)
+        self.models = AVAILABLE_MODELS
+        self.current_model_index = 0
+
     def _get_random_model(self) -> str:
-        """Select a random model from the pool"""
         return random.choice(self.models)
-    
-    def _get_next_fallback_model(self, current: str) -> Optional[str]:
-        """Get next model in rotation for fallback"""
-        try:
-            current_idx = self.models.index(current)
-            next_idx = (current_idx + 1) % len(self.models)
-            return self.models[next_idx]
-        except ValueError:
-            return self.models[0] if self.models else None
-    
-    def _create_chat_model(self, model_name: str) -> ChatGroq:
-        """Create a ChatGroq instance for the specified model"""
-        return ChatGroq(
-            groq_api_key=self.settings.groq_api_key,
-            model_name=model_name,
-            temperature=0.1,
-            max_tokens=4096
-        )
-    
+
+    def _get_next_fallback_model(self, failed_model: str) -> str:
+        available = [m for m in self.models if m != failed_model]
+        return random.choice(available) if available else self.models[0]
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type((Exception,)),
         reraise=True
     )
-    async def _invoke_with_retry(
-        self, 
-        model: ChatGroq, 
-        messages: List[BaseMessage]
-    ) -> AIMessage:
-        """Invoke model with retry logic"""
-        response = await model.ainvoke(messages)
-        return response
-    
+    async def _make_request(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float = 0.3,
+        max_tokens: int = 2048
+    ) -> Dict[str, Any]:
+        """Make a single API request to Groq."""
+        response = await self.client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+
+        content = response.choices[0].message.content
+        content = clean_llm_response(content)
+
+        return {
+            "content": content,
+            "model_used": model,
+            "usage": {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens
+            }
+        }
+
     async def invoke(
         self,
         messages: List[Dict[str, str]],
         system_prompt: Optional[str] = None,
-        model_name: Optional[str] = None
+        temperature: float = 0.3,
+        max_tokens: int = 2048,
+        model: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Invoke the LLM with messages.
-        
-        Args:
-            messages: List of message dicts with 'role' and 'content'
-            system_prompt: Optional system prompt to prepend
-            model_name: Optional specific model to use (otherwise random)
-        
-        Returns:
-            Dict with 'content', 'model_used', and 'success'
-        """
-        # Select model
-        selected_model = model_name or self._get_random_model()
-        models_tried = set()
-        
-        # Convert messages to LangChain format
-        lc_messages: List[BaseMessage] = []
-        
+        """Invoke the LLM with automatic model selection and fallback."""
         if system_prompt:
-            lc_messages.append(SystemMessage(content=system_prompt))
-        
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            
-            if role == "user":
-                lc_messages.append(HumanMessage(content=content))
-            elif role == "assistant":
-                lc_messages.append(AIMessage(content=content))
-            elif role == "system":
-                lc_messages.append(SystemMessage(content=content))
-        
-        # Try models with fallback
-        while len(models_tried) < len(self.models):
-            models_tried.add(selected_model)
-            
+            messages = [{"role": "system", "content": system_prompt}] + messages
+
+        selected_model = model or self._get_random_model()
+        logger.info(f"Using model: {selected_model}")
+
+        try:
+            return await self._make_request(messages, selected_model, temperature, max_tokens)
+        except Exception as e:
+            logger.warning(f"Model {selected_model} failed: {e}. Trying fallback...")
+            fallback_model = self._get_next_fallback_model(selected_model)
+            logger.info(f"Falling back to: {fallback_model}")
             try:
-                logger.info(f"Invoking Groq model: {selected_model}")
-                chat_model = self._create_chat_model(selected_model)
-                response = await self._invoke_with_retry(chat_model, lc_messages)
-                
-                return {
-                    "content": clean_llm_response(response.content),
-                    "model_used": selected_model,
-                    "success": True
-                }
-                
-            except Exception as e:
-                logger.warning(f"Model {selected_model} failed: {e}")
-                next_model = self._get_next_fallback_model(selected_model)
-                
-                if next_model and next_model not in models_tried:
-                    logger.info(f"Falling back to model: {next_model}")
-                    selected_model = next_model
-                else:
-                    raise GroqClientError(f"All models failed. Last error: {e}")
-        
-        raise GroqClientError("No available models to try")
-    
-    async def stream(
+                return await self._make_request(messages, fallback_model, temperature, max_tokens)
+            except Exception as e2:
+                logger.error(f"Fallback model {fallback_model} also failed: {e2}")
+                raise
+
+    async def invoke_with_json(
         self,
         messages: List[Dict[str, str]],
         system_prompt: Optional[str] = None,
-        model_name: Optional[str] = None
-    ):
-        """
-        Stream responses from the LLM.
-        Yields content chunks as they arrive.
-        """
-        selected_model = model_name or self._get_random_model()
-        
-        lc_messages: List[BaseMessage] = []
-        
-        if system_prompt:
-            lc_messages.append(SystemMessage(content=system_prompt))
-        
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            
-            if role == "user":
-                lc_messages.append(HumanMessage(content=content))
-            elif role == "assistant":
-                lc_messages.append(AIMessage(content=content))
-            elif role == "system":
-                lc_messages.append(SystemMessage(content=content))
-        
-        chat_model = self._create_chat_model(selected_model)
-        
-        async for chunk in chat_model.astream(lc_messages):
-            if chunk.content:
-                yield {
-                    "content": chunk.content,
-                    "model_used": selected_model
-                }
+        temperature: float = 0.1,
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Invoke LLM expecting JSON response."""
+        json_system = (system_prompt or "") + "\nRespond only with valid JSON. No markdown, no explanation."
+        return await self.invoke(messages, json_system, temperature, model=model)
 
 
-# Global client instance
-_groq_client: Optional[GroqClient] = None
+def clean_llm_response(text: str) -> str:
+    """Remove thinking tags and markdown artifacts from LLM output."""
+    if not text:
+        return text
+
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL)
+    text = text.strip()
+
+    if text.startswith("```") and text.endswith("```"):
+        lines = text.split("\n")
+        if len(lines) > 2:
+            text = "\n".join(lines[1:-1])
+
+    return text.strip()
+
+
+_groq_client: GroqClient | None = None
 
 
 def get_groq_client() -> GroqClient:
-    """Get or create Groq client instance"""
+    """Get or create Groq client instance."""
     global _groq_client
     if _groq_client is None:
         _groq_client = GroqClient()

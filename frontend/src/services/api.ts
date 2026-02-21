@@ -19,6 +19,36 @@ const api = axios.create({
     },
 });
 
+// Global error interceptor — transforms API errors into user-friendly messages
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response) {
+            const status = error.response.status;
+            const data = error.response.data;
+            const serverMessage = data?.message || data?.detail || '';
+
+            if (status === 404) {
+                error.userMessage = 'The requested resource was not found.';
+            } else if (status === 400) {
+                error.userMessage = serverMessage || 'Invalid request. Please check your input.';
+            } else if (status === 422) {
+                error.userMessage = 'The data provided is not in the correct format.';
+            } else if (status === 500) {
+                error.userMessage = 'The server encountered an error. Please try again in a moment.';
+            } else {
+                error.userMessage = serverMessage || 'An unexpected error occurred.';
+            }
+        } else if (error.request) {
+            error.userMessage = 'Cannot reach the server. Please check if the backend is running.';
+        } else {
+            error.userMessage = 'An unexpected error occurred. Please try again.';
+        }
+
+        return Promise.reject(error);
+    }
+);
+
 // Document APIs
 export const uploadInvoice = async (file: File): Promise<UploadResponse> => {
     const formData = new FormData();
@@ -124,4 +154,3 @@ export const renameDocument = async (
 };
 
 export default api;
-

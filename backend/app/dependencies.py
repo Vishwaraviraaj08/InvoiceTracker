@@ -1,39 +1,33 @@
-"""
-Dependency Injection for FastAPI
-Provides database connections, services, and other dependencies
-"""
-
-from typing import AsyncGenerator
+import logging
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from app.db.mongodb import MongoDBManager
 
-from app.config import get_settings
+logger = logging.getLogger(__name__)
+
+_db_manager: MongoDBManager | None = None
 
 
-_mongo_client: AsyncIOMotorClient | None = None
-
-
-async def get_database() -> AsyncGenerator[AsyncIOMotorDatabase, None]:
-    """Get MongoDB database instance"""
-    global _mongo_client
-    
-    settings = get_settings()
-    
-    if _mongo_client is None:
-        _mongo_client = AsyncIOMotorClient(settings.mongodb_uri)
-    
-    yield _mongo_client[settings.mongodb_database]
+async def get_database() -> AsyncIOMotorDatabase:
+    """FastAPI dependency: get database instance."""
+    global _db_manager
+    if _db_manager is None:
+        _db_manager = MongoDBManager()
+    if not _db_manager._connected:
+        await _db_manager.connect()
+    return _db_manager.get_database()
 
 
 async def startup_db():
-    """Initialize database connection on startup"""
-    global _mongo_client
-    settings = get_settings()
-    _mongo_client = AsyncIOMotorClient(settings.mongodb_uri)
+    """Initialize database connection on app startup."""
+    global _db_manager
+    _db_manager = MongoDBManager()
+    await _db_manager.connect()
+    logger.info("Database initialized")
 
 
 async def shutdown_db():
-    """Close database connection on shutdown"""
-    global _mongo_client
-    if _mongo_client is not None:
-        _mongo_client.close()
-        _mongo_client = None
+    """Close database connection on app shutdown."""
+    global _db_manager
+    if _db_manager:
+        await _db_manager.disconnect()
+        logger.info("Database connection closed")

@@ -1,58 +1,47 @@
-"""
-Validation Repository
-CRUD operations for validation results
-"""
-
-from typing import Optional, List
+import logging
+from typing import List, Optional
 from bson import ObjectId
 
-from app.db.mongodb import MongoDB
+from app.db.mongodb import get_database
 from app.db.models import ValidationResult
+
+logger = logging.getLogger(__name__)
 
 
 class ValidationRepository:
-    """Repository for validation results"""
-    
-    COLLECTION_NAME = "validation_results"
-    
-    @classmethod
-    def _get_collection(cls):
-        return MongoDB.get_collection(cls.COLLECTION_NAME)
-    
-    @classmethod
-    async def create(cls, validation: ValidationResult) -> str:
-        """Create a new validation result"""
-        doc_dict = validation.model_dump(by_alias=True, exclude={"id"})
-        result = await cls._get_collection().insert_one(doc_dict)
-        return str(result.inserted_id)
-    
-    @classmethod
-    async def get_by_document(cls, document_id: str) -> Optional[ValidationResult]:
-        """Get latest validation result for a document"""
-        doc = await cls._get_collection().find_one(
+    """CRUD operations for validation results."""
+
+    @staticmethod
+    async def create(result: ValidationResult) -> str:
+        db = get_database()
+        result_dict = result.model_dump(exclude={"id"})
+        insert_result = await db.validations.insert_one(result_dict)
+        return str(insert_result.inserted_id)
+
+    @staticmethod
+    async def get_by_document(document_id: str) -> Optional[ValidationResult]:
+        db = get_database()
+        doc = await db.validations.find_one(
             {"document_id": document_id},
             sort=[("validated_at", -1)]
         )
         if doc:
-            doc["_id"] = str(doc["_id"])
+            doc["id"] = str(doc.get("_id"))
             return ValidationResult(**doc)
         return None
-    
-    @classmethod
-    async def get_all_by_document(cls, document_id: str) -> List[ValidationResult]:
-        """Get all validation results for a document"""
-        cursor = cls._get_collection().find(
-            {"document_id": document_id}
-        ).sort("validated_at", -1)
-        
+
+    @staticmethod
+    async def get_all_by_document(document_id: str) -> List[ValidationResult]:
+        db = get_database()
+        cursor = db.validations.find({"document_id": document_id}).sort("validated_at", -1)
         results = []
         async for doc in cursor:
-            doc["_id"] = str(doc["_id"])
+            doc["id"] = str(doc.get("_id"))
             results.append(ValidationResult(**doc))
         return results
-    
-    @classmethod
-    async def delete_by_document(cls, document_id: str) -> int:
-        """Delete all validation results for a document"""
-        result = await cls._get_collection().delete_many({"document_id": document_id})
+
+    @staticmethod
+    async def delete_by_document(document_id: str) -> int:
+        db = get_database()
+        result = await db.validations.delete_many({"document_id": document_id})
         return result.deleted_count

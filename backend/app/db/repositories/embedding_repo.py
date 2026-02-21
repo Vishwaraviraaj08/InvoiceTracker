@@ -1,88 +1,69 @@
-"""
-Embedding Repository
-CRUD operations for document embeddings
-"""
-
-from typing import Optional, List
+import logging
+from typing import List, Optional
 from bson import ObjectId
 import numpy as np
 
-from app.db.mongodb import MongoDB
+from app.db.mongodb import get_database
 from app.db.models import EmbeddingChunk
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingRepository:
-    """Repository for embedding operations"""
-    
-    COLLECTION_NAME = "document_embeddings"
-    
-    @classmethod
-    def _get_collection(cls):
-        return MongoDB.get_collection(cls.COLLECTION_NAME)
-    
-    @classmethod
-    async def create(cls, embedding: EmbeddingChunk) -> str:
-        """Create a new embedding chunk"""
-        doc_dict = embedding.model_dump(by_alias=True, exclude={"id"})
-        result = await cls._get_collection().insert_one(doc_dict)
+    """CRUD operations for document embeddings."""
+
+    @staticmethod
+    async def create(chunk: EmbeddingChunk) -> str:
+        db = get_database()
+        chunk_dict = chunk.model_dump(exclude={"id"})
+        result = await db.embeddings.insert_one(chunk_dict)
         return str(result.inserted_id)
-    
-    @classmethod
-    async def create_many(cls, embeddings: List[EmbeddingChunk]) -> List[str]:
-        """Create multiple embedding chunks"""
-        if not embeddings:
-            return []
-        docs = [e.model_dump(by_alias=True, exclude={"id"}) for e in embeddings]
-        result = await cls._get_collection().insert_many(docs)
-        return [str(id) for id in result.inserted_ids]
-    
-    @classmethod
-    async def get_by_document(cls, document_id: str) -> List[EmbeddingChunk]:
-        """Get all embeddings for a document"""
-        cursor = cls._get_collection().find(
-            {"document_id": document_id}
-        ).sort("chunk_index", 1)
-        
-        embeddings = []
+
+    @staticmethod
+    async def create_many(chunks: List[EmbeddingChunk]) -> int:
+        if not chunks:
+            return 0
+        db = get_database()
+        chunk_dicts = [c.model_dump(exclude={"id"}) for c in chunks]
+        result = await db.embeddings.insert_many(chunk_dicts)
+        return len(result.inserted_ids)
+
+    @staticmethod
+    async def get_by_document(document_id: str) -> List[EmbeddingChunk]:
+        db = get_database()
+        cursor = db.embeddings.find({"document_id": document_id}).sort("chunk_index", 1)
+        chunks = []
         async for doc in cursor:
-            doc["_id"] = str(doc["_id"])
-            embeddings.append(EmbeddingChunk(**doc))
-        return embeddings
-    
-    @classmethod
-    async def delete_by_document(cls, document_id: str) -> int:
-        """Delete all embeddings for a document"""
-        result = await cls._get_collection().delete_many({"document_id": document_id})
+            doc["id"] = str(doc.get("_id"))
+            chunks.append(EmbeddingChunk(**doc))
+        return chunks
+
+    @staticmethod
+    async def delete_by_document(document_id: str) -> int:
+        db = get_database()
+        result = await db.embeddings.delete_many({"document_id": document_id})
         return result.deleted_count
-    
-    @classmethod
+
+    @staticmethod
     async def similarity_search(
-        cls, 
-        document_id: str, 
-        query_embedding: List[float], 
-        top_k: int = 5
+        document_id: str,
+        query_embedding: List[float],
+        top_k: int = 3
     ) -> List[EmbeddingChunk]:
-        """
-        Find most similar chunks for a document using cosine similarity.
-        Note: For production, consider using MongoDB Atlas Vector Search
-        """
-        embeddings = await cls.get_by_document(document_id)
-        
-        if not embeddings:
+        """Find most similar chunks using cosine similarity."""
+        chunks = await EmbeddingRepository.get_by_document(document_id)
+        if not chunks:
             return []
-        
-        # Convert to numpy for efficient computation
+
         query_vec = np.array(query_embedding)
-        
-        # Calculate cosine similarities
-        similarities = []
-        for emb in embeddings:
-            emb_vec = np.array(emb.embedding)
-            similarity = np.dot(query_vec, emb_vec) / (
-                np.linalg.norm(query_vec) * np.linalg.norm(emb_vec) + 1e-8
+        scored_chunks = []
+
+        for chunk in chunks:
+            chunk_vec = np.array(chunk.embedding)
+            similarity = np.dot(query_vec, chunk_vec) / (
+                np.linalg.norm(query_vec) * np.linalg.norm(chunk_vec) + 1e-10
             )
-            similarities.append((similarity, emb))
-        
-        # Sort by similarity and return top_k
-        similarities.sort(key=lambda x: x[0], reverse=True)
-        return [emb for _, emb in similarities[:top_k]]
+            scored_chunks.append((chunk, float(similarity)))
+
+        scored_chunks.sort(key=lambda x: x[1], reverse=True)
+        return [chunk for chunk, _ in scored_chunks[:top_k]]

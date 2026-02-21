@@ -1,12 +1,8 @@
-"""
-Invoice Validation MCP Server
-Provides tools for validating invoice correctness
-"""
-
 import logging
+import json
+import re
 from typing import Any, Dict, List, Optional
 from datetime import datetime
-import re
 
 from app.mcp.base import BaseMCPServer, MCPToolDefinition, MCPToolResult
 from app.db.repositories.document_repo import DocumentRepository
@@ -17,30 +13,39 @@ from app.core.llm.groq_client import get_groq_client
 logger = logging.getLogger(__name__)
 
 
-VALIDATION_PROMPT = """You are an expert invoice validator. Analyze the provided invoice text and identify any issues.
+VALIDATION_PROMPT = """You are an invoice validator. Your job is to meticulously check the invoice text below and accurately report its status.
 
-Check for:
-1. Missing required fields (vendor name, invoice number, date, total amount)
-2. Invalid dates (future dates, malformed dates)
-3. Suspicious totals (negative amounts, unrealistic values)
-4. Missing tax information
-5. Inconsistent line item totals
-6. Missing contact information
-7. Any other anomalies
+IMPORTANT RULES:
+- SEARCH THE ENTIRE TEXT CAREFULLY before reporting anything as "missing".
+- Accept ALL date formats: "16 June 2025", "06/16/2025", "2025-06-16", "16-06-2025", "June 16, 2025", etc. Convert to YYYY-MM-DD in extracted_metadata.
+- If data exists in ANY recognizable form, do NOT report it as missing.
+- Ensure you accurately distinguish between critical errors and optional warnings.
+
+Critical fields (MUST be present. Flag as "error" if missing, making the invoice invalid):
+1. Vendor/seller name
+2. Invoice number (any ID/reference number counts)
+3. Date (any format)
+4. Total amount
+
+Optional fields (Flag as "warning" or "info" if missing. They do NOT make the invoice invalid):
+- Tax information
+- Contact information
+- Bank account details
+- Email address
 
 Invoice text:
 {invoice_text}
 
 Respond with a JSON object:
 {{
-    "valid": true/false,
+    "valid": true/false (true ONLY IF no "error" severity issues are found),
     "issues": [
         {{"field": "field_name", "severity": "error|warning|info", "message": "description"}}
     ],
     "extracted_metadata": {{
         "vendor": "extracted vendor name or null",
         "invoice_number": "extracted invoice number or null",
-        "date": "extracted date as YYYY-MM-DD or null",
+        "date": "extracted date converted to YYYY-MM-DD or null",
         "total": extracted total as number or null,
         "currency": "USD/EUR/etc or null"
     }},
@@ -50,92 +55,54 @@ Respond with a JSON object:
 
 
 class ValidationMCPServer(BaseMCPServer):
-    """MCP Server for invoice validation operations"""
-    
+    """MCP Server for invoice validation operations."""
+
     def __init__(self):
-        super().__init__(
-            name="invoice_validation",
-            description="Validates invoice documents for correctness and completeness"
-        )
+        super().__init__(name="invoice_validation", description="Validates invoice documents for correctness and completeness")
         self.groq_client = get_groq_client()
-    
+
     def _register_tools(self) -> None:
-        """Register validation tools"""
-        
         self.register_tool(MCPToolDefinition(
             name="validate_invoice",
-            description="Validate an invoice document for correctness, checking for missing fields, invalid data, and suspicious values",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "document_id": {
-                        "type": "string",
-                        "description": "The ID of the invoice document to validate"
-                    }
-                },
-                "required": ["document_id"]
-            },
+            description="Validate an invoice document for correctness",
+            parameters={"type": "object", "properties": {"document_id": {"type": "string", "description": "The ID of the invoice document to validate"}}, "required": ["document_id"]},
             required_params=["document_id"]
         ))
-        
+
         self.register_tool(MCPToolDefinition(
             name="get_validation_rules",
             description="Get the list of validation rules applied to invoices",
-            parameters={
-                "type": "object",
-                "properties": {}
-            },
+            parameters={"type": "object", "properties": {}},
             required_params=[]
         ))
-        
+
         self.register_tool(MCPToolDefinition(
             name="get_validation_result",
             description="Get the latest validation result for a document",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "document_id": {
-                        "type": "string",
-                        "description": "The document ID to get validation result for"
-                    }
-                },
-                "required": ["document_id"]
-            },
+            parameters={"type": "object", "properties": {"document_id": {"type": "string", "description": "The document ID"}}, "required": ["document_id"]},
             required_params=["document_id"]
         ))
-        
+
         self.register_tool(MCPToolDefinition(
             name="force_validate_document",
-            description="Force validate a document as valid even if it has issues. Use when admin approves despite errors.",
+            description="Force validate a document as valid even if it has issues.",
             parameters={
                 "type": "object",
                 "properties": {
-                    "document_id": {
-                        "type": "string",
-                        "description": "The document ID to force validate"
-                    },
-                    "corrections": {
-                        "type": "object",
-                        "description": "Optional corrections to apply (field: value pairs)"
-                    },
-                    "admin_notes": {
-                        "type": "string",
-                        "description": "Optional notes from admin about why force validated"
-                    }
+                    "document_id": {"type": "string", "description": "The document ID to force validate"},
+                    "corrections": {"type": "object", "description": "Optional corrections to apply"},
+                    "admin_notes": {"type": "string", "description": "Optional notes from admin"}
                 },
                 "required": ["document_id"]
             },
             required_params=["document_id"]
         ))
-    
+
     async def execute_tool(self, tool_name: str, args: Dict[str, Any]) -> MCPToolResult:
-        """Execute a validation tool"""
-        
-        # Validate arguments
         error = self.validate_args(tool_name, args)
         if error:
             return MCPToolResult(success=False, error=error)
-        
+
         try:
             if tool_name == "validate_invoice":
                 return await self._validate_invoice(args["document_id"])
@@ -144,60 +111,42 @@ class ValidationMCPServer(BaseMCPServer):
             elif tool_name == "get_validation_result":
                 return await self._get_validation_result(args["document_id"])
             elif tool_name == "force_validate_document":
-                return await self._force_validate_document(
-                    args["document_id"],
-                    args.get("corrections", {}),
-                    args.get("admin_notes")
-                )
+                return await self._force_validate_document(args["document_id"], args.get("corrections", {}), args.get("admin_notes"))
             else:
                 return MCPToolResult(success=False, error=f"Unknown tool: {tool_name}")
         except Exception as e:
             logger.error(f"Tool execution failed: {e}")
             return MCPToolResult(success=False, error=str(e))
-    
+
     async def _validate_invoice(self, document_id: str) -> MCPToolResult:
-        """Validate an invoice document"""
-        
-        # Get document
         document = await DocumentRepository.get_by_id(document_id)
         if not document:
             return MCPToolResult(success=False, error="Document not found")
-        
-        # Run LLM-based validation
+
         prompt = VALIDATION_PROMPT.format(invoice_text=document.raw_text[:4000])
-        
+
         result = await self.groq_client.invoke(
             messages=[{"role": "user", "content": prompt}],
-            system_prompt="You are an expert invoice validator. Respond only with valid JSON."
+            system_prompt="You are a lenient invoice validator. Search the text thoroughly before flagging anything as missing. Accept all date formats. Respond only with valid JSON."
         )
-        
-        # Parse response
-        import json
+
         response_text = result["content"]
-        
-        # Extract JSON from possible markdown
+
         if "```json" in response_text:
             response_text = response_text.split("```json")[1].split("```")[0]
         elif "```" in response_text:
             response_text = response_text.split("```")[1].split("```")[0]
-        
+
         try:
             validation_data = json.loads(response_text.strip())
         except json.JSONDecodeError:
-            # Fallback to basic validation
             validation_data = self._basic_validation(document.raw_text)
-        
-        # Create validation issues
+
         issues = [
-            ValidationIssue(
-                field=issue.get("field", "unknown"),
-                severity=issue.get("severity", "warning"),
-                message=issue.get("message", "")
-            )
+            ValidationIssue(field=issue.get("field", "unknown"), severity=issue.get("severity", "warning"), message=issue.get("message", ""))
             for issue in validation_data.get("issues", [])
         ]
-        
-        # Store validation result
+
         validation_result = ValidationResult(
             document_id=document_id,
             valid=validation_data.get("valid", False),
@@ -205,25 +154,26 @@ class ValidationMCPServer(BaseMCPServer):
             model_used=result["model_used"]
         )
         await ValidationRepository.create(validation_result)
-        
-        # Update document status
+
         status = "valid" if validation_data.get("valid") else "invalid"
         if validation_data.get("needs_manual_review"):
             status = "needs_review"
-        await DocumentRepository.update_status(document_id, status)
-        
-        # Update metadata if extracted
+        await DocumentRepository.update_status(document_id, {"validation_status": status})
+
         if validation_data.get("extracted_metadata"):
             meta = validation_data["extracted_metadata"]
-            metadata = DocumentMetadata(
-                vendor=meta.get("vendor"),
-                invoice_number=meta.get("invoice_number"),
-                date=datetime.fromisoformat(meta["date"]) if meta.get("date") else None,
-                total=meta.get("total"),
-                currency=meta.get("currency")
-            )
-            await DocumentRepository.update_metadata(document_id, metadata)
-        
+            update_fields = {}
+            if meta.get("vendor"):
+                update_fields["vendor"] = meta["vendor"]
+            if meta.get("invoice_number"):
+                update_fields["invoice_number"] = meta["invoice_number"]
+            if meta.get("total"):
+                update_fields["total"] = meta["total"]
+            if meta.get("currency"):
+                update_fields["currency"] = meta["currency"]
+            if update_fields:
+                await DocumentRepository.update_metadata(document_id, update_fields)
+
         return MCPToolResult(
             success=True,
             data={
@@ -234,59 +184,41 @@ class ValidationMCPServer(BaseMCPServer):
             },
             metadata={"model_used": result["model_used"]}
         )
-    
+
     def _basic_validation(self, text: str) -> Dict[str, Any]:
-        """Fallback basic validation rules"""
+        """Fallback basic validation rules — lenient."""
         issues = []
-        
-        # Check for common invoice fields
-        if not re.search(r'\b(invoice|inv|bill)\s*#?\s*:?\s*\d+', text, re.IGNORECASE):
-            issues.append({
-                "field": "invoice_number",
-                "severity": "warning",
-                "message": "Could not find invoice number"
-            })
-        
-        if not re.search(r'\$?\d+[.,]\d{2}', text):
-            issues.append({
-                "field": "total",
-                "severity": "error",
-                "message": "Could not find total amount"
-            })
-        
-        if not re.search(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}', text):
-            issues.append({
-                "field": "date",
-                "severity": "warning",
-                "message": "Could not find invoice date"
-            })
-        
+
+        if not re.search(r'\b(invoice|inv|bill|receipt|order|ref)\s*[#:.]?\s*\d+', text, re.IGNORECASE):
+            issues.append({"field": "invoice_number", "severity": "warning", "message": "Could not find invoice/reference number"})
+
+        if not re.search(r'[\$€£]?\s*\d+[.,]\d{2}', text):
+            issues.append({"field": "total", "severity": "error", "message": "Could not find total amount"})
+
+        # Accept many date formats: DD/MM/YYYY, DD-MM-YYYY, "16 June 2025", "June 16, 2025", YYYY-MM-DD
+        date_patterns = [
+            r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}',
+            r'\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{4}',
+            r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},?\s+\d{4}',
+            r'\d{4}-\d{2}-\d{2}',
+        ]
+        has_date = any(re.search(p, text, re.IGNORECASE) for p in date_patterns)
+        if not has_date:
+            issues.append({"field": "date", "severity": "warning", "message": "Could not find invoice date"})
+
         return {
             "valid": len([i for i in issues if i["severity"] == "error"]) == 0,
             "issues": issues,
             "needs_manual_review": len(issues) > 0
         }
-    
-    async def _force_validate_document(
-        self, 
-        document_id: str, 
-        corrections: Dict[str, Any],
-        admin_notes: Optional[str] = None
-    ) -> MCPToolResult:
-        """Force validate a document with optional corrections"""
-        
+
+    async def _force_validate_document(self, document_id: str, corrections: Dict[str, Any], admin_notes: Optional[str] = None) -> MCPToolResult:
         document = await DocumentRepository.get_by_id(document_id)
         if not document:
             return MCPToolResult(success=False, error="Document not found")
-        
-        # Update document
-        update_data = {
-            "validation_status": "valid",
-            "forced_valid": True,
-            "admin_corrections": corrections or {}
-        }
-        
-        # Apply corrections to metadata if provided
+
+        update_data = {"validation_status": "valid", "forced_valid": True, "admin_corrections": corrections or {}}
+
         if corrections:
             if "vendor" in corrections:
                 update_data["metadata.vendor"] = corrections["vendor"]
@@ -299,11 +231,11 @@ class ValidationMCPServer(BaseMCPServer):
                     pass
             if "currency" in corrections:
                 update_data["metadata.currency"] = corrections["currency"]
-        
-        await DocumentRepository.update(document_id, update_data)
-        
+
+        await DocumentRepository.update_status(document_id, update_data)
+
         logger.info(f"Force validated document {document_id} via chat")
-        
+
         return MCPToolResult(
             success=True,
             data={
@@ -315,34 +247,29 @@ class ValidationMCPServer(BaseMCPServer):
                 "message": f"Document '{document.filename}' has been force validated as valid."
             }
         )
-    
+
     async def _get_validation_rules(self) -> MCPToolResult:
-        """Get validation rules"""
         return MCPToolResult(
             success=True,
             data={
                 "rules": [
                     {"name": "vendor_name", "description": "Invoice must have vendor/seller name", "severity": "error"},
-                    {"name": "invoice_number", "description": "Invoice must have unique invoice number", "severity": "error"},
-                    {"name": "invoice_date", "description": "Invoice must have valid date", "severity": "error"},
+                    {"name": "invoice_number", "description": "Invoice should have an invoice/reference number", "severity": "warning"},
+                    {"name": "invoice_date", "description": "Invoice must have a date (any format accepted)", "severity": "warning"},
                     {"name": "total_amount", "description": "Invoice must have total amount", "severity": "error"},
-                    {"name": "line_items", "description": "Line items should sum to total", "severity": "warning"},
-                    {"name": "tax_info", "description": "Tax information should be present", "severity": "info"},
-                    {"name": "contact_info", "description": "Contact information recommended", "severity": "info"}
+                    {"name": "line_items", "description": "Line items should sum to total", "severity": "info"},
+                    {"name": "tax_info", "description": "Tax information is optional", "severity": "info"},
+                    {"name": "contact_info", "description": "Contact information is optional", "severity": "info"}
                 ]
             }
         )
-    
+
     async def _get_validation_result(self, document_id: str) -> MCPToolResult:
-        """Get validation result for a document"""
         result = await ValidationRepository.get_by_document(document_id)
-        
+
         if not result:
-            return MCPToolResult(
-                success=True,
-                data={"validated": False, "message": "Document has not been validated yet"}
-            )
-        
+            return MCPToolResult(success=True, data={"validated": False, "message": "Document has not been validated yet"})
+
         return MCPToolResult(
             success=True,
             data={
@@ -355,12 +282,11 @@ class ValidationMCPServer(BaseMCPServer):
         )
 
 
-# Global instance
 _validation_server: ValidationMCPServer | None = None
 
 
 def get_validation_server() -> ValidationMCPServer:
-    """Get or create validation MCP server instance"""
+    """Get or create validation MCP server instance."""
     global _validation_server
     if _validation_server is None:
         _validation_server = ValidationMCPServer()

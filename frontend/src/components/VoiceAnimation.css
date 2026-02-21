@@ -104,3 +104,25 @@
         opacity: 1;
     }
 }
+
+/* Voice Stop Button */
+.voice-stop-btn {
+    background: rgba(255, 59, 48, 0.2);
+    border: 1px solid rgba(255, 59, 48, 0.5);
+    color: #ff6b6b;
+    padding: 8px 20px;
+    border-radius: 25px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(10px);
+    letter-spacing: 0.5px;
+}
+
+.voice-stop-btn:hover {
+    background: rgba(255, 59, 48, 0.4);
+    color: #ffffff;
+    box-shadow: 0 0 20px rgba(255, 59, 48, 0.3);
+    transform: scale(1.05);
+}

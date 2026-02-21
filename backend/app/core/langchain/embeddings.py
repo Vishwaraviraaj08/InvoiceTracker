@@ -1,90 +1,69 @@
-"""
-Embeddings Module
-Handles text embedding generation using sentence-transformers
-"""
-
 import logging
 from typing import List
-from functools import lru_cache
-from sentence_transformers import SentenceTransformer
-
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+_model = None
 
-class EmbeddingGenerator:
-    """Generates embeddings using sentence-transformers (runs locally)"""
-    
+
+def _get_model():
+    """Lazy-load the embedding model on first use."""
+    global _model
+    if _model is None:
+        from sentence_transformers import SentenceTransformer
+        settings = get_settings()
+        logger.info(f"Loading embedding model: {settings.embedding_model}")
+        _model = SentenceTransformer(settings.embedding_model)
+        logger.info("Embedding model loaded successfully")
+    return _model
+
+
+class EmbeddingService:
+    """Handles text embedding generation and chunking."""
+
     def __init__(self):
         self.settings = get_settings()
-        self._model: SentenceTransformer | None = None
-    
-    @property
-    def model(self) -> SentenceTransformer:
-        """Lazy load the embedding model"""
-        if self._model is None:
-            logger.info(f"Loading embedding model: {self.settings.embedding_model}")
-            self._model = SentenceTransformer(self.settings.embedding_model)
-            logger.info("Embedding model loaded successfully")
-        return self._model
-    
+
     def embed_text(self, text: str) -> List[float]:
-        """Generate embedding for a single text"""
-        embedding = self.model.encode(text, convert_to_numpy=True)
+        """Generate embedding for a single text."""
+        model = _get_model()
+        embedding = model.encode(text, normalize_embeddings=True)
         return embedding.tolist()
-    
-    def embed_texts(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings for multiple texts"""
-        embeddings = self.model.encode(texts, convert_to_numpy=True)
-        return [emb.tolist() for emb in embeddings]
-    
+
+    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for multiple texts."""
+        model = _get_model()
+        embeddings = model.encode(texts, normalize_embeddings=True, batch_size=32)
+        return [e.tolist() for e in embeddings]
+
     def chunk_text(self, text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
-        """
-        Split text into overlapping chunks for embedding.
-        
-        Args:
-            text: The text to chunk
-            chunk_size: Maximum characters per chunk
-            overlap: Characters of overlap between chunks
-        
-        Returns:
-            List of text chunks
-        """
-        if len(text) <= chunk_size:
-            return [text]
-        
+        """Split text into overlapping chunks."""
+        if not text or len(text) < chunk_size:
+            return [text] if text else []
+
         chunks = []
         start = 0
-        
         while start < len(text):
             end = start + chunk_size
-            
-            # Try to break at a sentence or word boundary
+
             if end < len(text):
-                # Look for sentence boundaries
-                for boundary in ['. ', '.\n', '\n\n', '\n', ' ']:
-                    last_boundary = text[start:end].rfind(boundary)
-                    if last_boundary > chunk_size // 2:
-                        end = start + last_boundary + len(boundary)
-                        break
-            
-            chunk = text[start:end].strip()
-            if chunk:
-                chunks.append(chunk)
-            
+                break_point = text.rfind('.', start, end)
+                if break_point > start + chunk_size // 2:
+                    end = break_point + 1
+
+            chunks.append(text[start:end].strip())
             start = end - overlap
-        
-        return chunks
+
+        return [c for c in chunks if c]
 
 
-# Global instance
-_embedding_generator: EmbeddingGenerator | None = None
+_embedding_service: EmbeddingService | None = None
 
 
-def get_embedding_generator() -> EmbeddingGenerator:
-    """Get or create embedding generator instance"""
-    global _embedding_generator
-    if _embedding_generator is None:
-        _embedding_generator = EmbeddingGenerator()
-    return _embedding_generator
+def get_embedding_service() -> EmbeddingService:
+    """Get or create embedding service instance."""
+    global _embedding_service
+    if _embedding_service is None:
+        _embedding_service = EmbeddingService()
+    return _embedding_service

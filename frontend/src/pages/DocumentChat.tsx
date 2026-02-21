@@ -9,6 +9,7 @@ import { VoiceAnimation } from '../components/VoiceAnimation';
 import { VoiceRecordingAnimation } from '../components/VoiceRecordingAnimation';
 import { sendDocumentMessage, getDocument } from '../services/api';
 import { getTTSService } from '../utils/tts';
+import { useVoiceMode } from '../context/VoiceContext';
 import { StatusBadge } from '../components/Common';
 import type { ChatMessage, Document } from '../types';
 
@@ -26,6 +27,12 @@ const DocumentChat = () => {
     const [isRecording, setIsRecording] = useState(false);
 
     const ttsService = getTTSService();
+    const { voiceEnabled } = useVoiceMode();
+
+    const stopSpeaking = useCallback(() => {
+        ttsService.stop();
+        setIsSpeaking(false);
+    }, [ttsService]);
 
     useEffect(() => {
         if (docId) {
@@ -74,8 +81,8 @@ const DocumentChat = () => {
             };
             setMessages((prev) => [...prev, assistantMessage]);
 
-            // Auto-play TTS for AI response
-            if (response.response) {
+            // Auto-play TTS only if voice mode is enabled
+            if (voiceEnabled && response.response) {
                 ttsService.speak(response.response, {
                     onStart: () => setIsSpeaking(true),
                     onEnd: () => setIsSpeaking(false)
@@ -92,12 +99,19 @@ const DocumentChat = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [docId, sessionId, ttsService]);
+    }, [docId, sessionId, ttsService, voiceEnabled]);
 
     const handleVoiceTranscript = (transcript: string) => {
         setInputValue(transcript);
         setTimeout(() => handleSend(transcript), 500);
     };
+
+    // Stop TTS when voice mode is disabled
+    useEffect(() => {
+        if (!voiceEnabled && isSpeaking) {
+            stopSpeaking();
+        }
+    }, [voiceEnabled, isSpeaking, stopSpeaking]);
 
     // Cleanup TTS on unmount
     useEffect(() => {
@@ -152,7 +166,7 @@ const DocumentChat = () => {
                 <Col lg={8}>
                     <div className="chat-container" style={{ position: 'relative' }}>
                         <VoiceRecordingAnimation isRecording={isRecording} />
-                        <VoiceAnimation isActive={isSpeaking} />
+                        <VoiceAnimation isActive={isSpeaking} onStop={stopSpeaking} />
                         <ChatWindow
                             messages={messages}
                             isLoading={isLoading}
